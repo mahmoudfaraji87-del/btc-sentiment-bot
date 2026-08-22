@@ -7,7 +7,7 @@ def get_sentiment_analysis():
     prompt = "لطفا یک تحلیل کوتاه، مفید و سریع از وضعیت و سنتیمنت کلی بازار بیت‌کوین (BTC) ارائه بده. پاسخ به زبان فارسی، خلاصه‌شده و شامل بولت‌پوینت‌های کاربردی باشد."
     
     response = client.messages.create(
-        model="claude-3-5-sonnet-20241022",
+        model="claude-3-5-sonnet-latest",
         max_tokens=500,
         messages=[{"role": "user", "content": prompt}]
     )
