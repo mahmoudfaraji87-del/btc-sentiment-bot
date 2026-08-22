@@ -1,11 +1,13 @@
 import os
-import json
 import requests
+import json
+
+STATE_FILE = "last_sentiment.json"
 
 def get_coinglass_sentiment():
-    url = "https://|api.coinglass.com/api/support/sentiment/btc" # API عمومی Coinglass
+    url = "https://api.coinglass.com/api/support/sentiment/btc"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Referer": "https://www.coinglass.com/LongShortRatio"
     }
     
@@ -13,31 +15,32 @@ def get_coinglass_sentiment():
         response = requests.get(url, headers=headers, timeout=10)
         data = response.json()
         
-        # استخراج درصدهای سنتیمنت
         if data.get("success") and "data" in data:
-            sentiment_data = data["data"]
-            very_bullish = sentiment_data.get("veryBullish", 0)
-            bullish = sentiment_data.get("bullish", 0)
-            neutral = sentiment_data.get("neutral", 0)
-            bearish = sentiment_data.get("bearish", 0)
-            very_bearish = sentiment_data.get("veryBearish", 0)
-        else:
-            # مقادیر پیش‌فرض در صورت عدم دریافت موفق
-            raise Exception("پاسخ معتبری از API Coinglass دریافت نشد.")
-            
-    except Exception:
-        # ساختار فال‌بک بر اساس الگوی Coinglass
-        very_bullish, bullish, neutral, bearish, very_bearish = 13, 15, 21, 37, 14
+            s = data["data"]
+            return {
+                "very_bullish": s.get("veryBullish", 0),
+                "bullish": s.get("bullish", 0),
+                "neutral": s.get("neutral", 0),
+                "bearish": s.get("bearish", 0),
+                "very_bearish": s.get("veryBearish", 0)
+            }
+    except Exception as e:
+        print("Error fetching data:", e)
+    
+    return None
 
-    report = (
-        "📊 **BTC Sentiment (Coinglass)**\n\n"
-        f"🟢 Very Bullish: {very_bullish}%\n"
-        f"🟢 Bullish: {bullish}%\n"
-        f"⚪ Neutral: {neutral}%\n"
-        f"🔴 Bearish: {bearish}%\n"
-        f"🔴 Very Bearish: {very_bearish}%"
-    )
-    return report
+def load_last_state():
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            return None
+    return None
+
+def save_current_state(data):
+    with open(STATE_FILE, "w") as f:
+        json.dump(data, f)
 
 def send_telegram(message):
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -47,5 +50,23 @@ def send_telegram(message):
     requests.post(url, json=payload)
 
 if __name__ == "__main__":
-    report = get_coinglass_sentiment()
-    send_telegram(report)
+    current_data = get_coinglass_sentiment()
+    
+    if current_data:
+        last_data = load_last_state()
+        
+        # اگر درصدها تغییر کرده باشند یا دفعه اول اجرا باشد
+        if current_data != last_data:
+            report = (
+                "📊 **تغییر در سنتیمنت بیت‌کوین (Coinglass)**\n\n"
+                f"🟢 Very Bullish: {current_data['very_bullish']}%\n"
+                f"🟢 Bullish: {current_data['bullish']}%\n"
+                f"⚪ Neutral: {current_data['neutral']}%\n"
+                f"🔴 Bearish: {current_data['bearish']}%\n"
+                f"🔴 Very Bearish: {current_data['very_bearish']}%"
+            )
+            send_telegram(report)
+            save_current_state(current_data)
+            print("تغییرات جدید شناسایی و ارسال شد.")
+        else:
+            print("بدون تغییر نسبت به بررسی قبلی.")
