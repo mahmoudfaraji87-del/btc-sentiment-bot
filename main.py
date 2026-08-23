@@ -1,8 +1,5 @@
 import os
 import requests
-import json
-
-STATE_FILE = "last_sentiment.json"
 
 def get_coinglass_sentiment():
     url = "https://api.coinglass.com/api/support/sentiment/btc"
@@ -29,44 +26,25 @@ def get_coinglass_sentiment():
     
     return None
 
-def load_last_state():
-    if os.path.exists(STATE_FILE):
-        try:
-            with open(STATE_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            return None
-    return None
-
-def save_current_state(data):
-    with open(STATE_FILE, "w") as f:
-        json.dump(data, f)
-
 def send_telegram(message):
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}
-    requests.post(url, json=payload)
+    res = requests.post(url, json=payload)
+    print("Telegram Response:", res.text)
 
 if __name__ == "__main__":
-    current_data = get_coinglass_sentiment()
-    
-    if current_data:
-        last_data = load_last_state()
-        
-        # اگر درصدها تغییر کرده باشند یا دفعه اول اجرا باشد
-        if current_data != last_data:
-            report = (
-                "📊 **تغییر در سنتیمنت بیت‌کوین (Coinglass)**\n\n"
-                f"🟢 Very Bullish: {current_data['very_bullish']}%\n"
-                f"🟢 Bullish: {current_data['bullish']}%\n"
-                f"⚪ Neutral: {current_data['neutral']}%\n"
-                f"🔴 Bearish: {current_data['bearish']}%\n"
-                f"🔴 Very Bearish: {current_data['very_bearish']}%"
-            )
-            send_telegram(report)
-            save_current_state(current_data)
-            print("تغییرات جدید شناسایی و ارسال شد.")
-        else:
-            print("بدون تغییر نسبت به بررسی قبلی.")
+    data = get_coinglass_sentiment()
+    if data:
+        report = (
+            "📊 **گزارش ساعتی سنتیمنت بیت‌کوین (Coinglass)**\n\n"
+            f"🟢 Very Bullish: {data['very_bullish']}%\n"
+            f"🟢 Bullish: {data['bullish']}%\n"
+            f"⚪ Neutral: {data['neutral']}%\n"
+            f"🔴 Bearish: {data['bearish']}%\n"
+            f"🔴 Very Bearish: {data['very_bearish']}%"
+        )
+        send_telegram(report)
+    else:
+        send_telegram("⚠️ خطا در دریافت اطلاعات جدید از سایت Coinglass.")
