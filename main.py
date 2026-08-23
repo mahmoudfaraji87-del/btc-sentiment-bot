@@ -1,53 +1,43 @@
 import os
 import time
-import re
-from playwright.sync_api import sync_playwright
 import requests
 
-def get_coinglass_sentiment_fixed():
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        # تنظیم ابعاد مرورگر واقعی برای رندر کامل نمودارها
-        context = browser.new_context(
-            viewport={'width': 1280, 'height': 800},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-        )
-        page = context.new_page()
-
-        try:
-            page.goto("https://www.coinglass.com/LongShortRatio", wait_until="domcontentloaded", timeout=60000)
-            time.sleep(4)
-
-            # رد کردن بنر کوکی در صورت وجود
-            try:
-                accept_btn = page.query_selector("button:has-text('Accept'), button:has-text('Agree')")
-                if accept_btn:
-                    accept_btn.click()
-                    time.sleep(1)
-            except Exception:
-                pass
-
-            # اسکرول اندک برای فعال‌شدن لود نمودارها
-            page.evaluate("window.scrollBy(0, 300)")
-            time.sleep(3)
-
-            # استخراج تمام کارهای متنی درون کارت‌های درصد
-            content_text = page.inner_text("body")
-            
-            browser.close()
-
-            # الگوی استخراج درصدهای دقیق Long و Short
-            # جستجوی درصدهای همراه با علامت %
-            matches = re.findall(r'(\d+(?:\.\d+)?%)', content_text)
-            
-            if matches:
-                return True, matches
-            else:
-                return False, "هیچ درصدی در صفحه پیدا نشد."
-
-        except Exception as e:
-            browser.close()
-            return False, f"خطای مرورگر: {str(e)}"
+def get_coinglass_long_short_ratio():
+    # استفاده از API مستقیم دریافت نسبت Long/Short نمودار اصلی
+    timestamp = int(time.time() * 1000)
+    url = f"https://open-api.coinglass.com/api/pro/v1/futures/longShort_chart?symbol=BTC&interval=1h&_t={timestamp}"
+    
+    # آدرس دوم پشتیبان مستقیم سایت
+    backup_url = f"https://html.coinglass.com/api/futures/longShortRate?symbol=BTC&timeType=3&_t={timestamp}"
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Cache-Control": "no-cache"
+    }
+    
+    try:
+        # درخواست اولیه
+        res = requests.get(backup_url, headers=headers, timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            if data.get("success") and "data" in data:
+                d = data["data"]
+                # در صورتی که دیتا شامل لیست زمان‌بندی باشد، آخرین مقدار (زنده) را می‌گیرد
+                if isinstance(d, list) and len(d) > 0:
+                    latest = d[-1]
+                    long_rate = latest.get("longRate", latest.get("longRatio", 0))
+                    short_rate = latest.get("shortRate", latest.get("shortRatio", 0))
+                    return True, float(long_rate), float(short_rate)
+                elif isinstance(d, dict):
+                    long_rate = d.get("longRate", d.get("longRatio", 0))
+                    short_rate = d.get("shortRate", d.get("shortRatio", 0))
+                    return True, float(long_rate), float(short_rate)
+                    
+    except Exception as e:
+        print("Error fetching backup API:", e)
+        
+    return False, 0, 0
 
 def send_telegram(message):
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -66,17 +56,21 @@ def send_telegram(message):
         print("خطا در ارسال تلگرام:", e)
 
 if __name__ == "__main__":
-    success, result = get_coinglass_sentiment_fixed()
+    success, long_p, short_p = get_coinglass_long_short_ratio()
     current_time = time.strftime("%H:%M:%S UTC")
 
-    if success:
-        # نمایش 6 درصد اول استخراج‌شده از نمودار برای اطمینان
-        formatted_rates = "\n".join([f"🔹 {rate}" for rate in result[:6]])
+    if success and (long_p > 0 or short_p > 0):
+        # گرد کردن درصدها تا ۲ رقم اعشار
+        long_val = f"{long_p:.2f}%"
+        short_val = f"{short_p:.2f}%"
+        
         report = (
-            f"📊 **پایش آنلاین سنتیمنت (Coinglass)**\n"
+            f"📊 **پایش آنلاین نسبت Long/Short بیت‌کوین**\n"
             f"⏰ زمان بروزرسانی: `{current_time}`\n\n"
-            f"{formatted_rates}"
+            f"🟢 **Long:** {long_val}\n"
+            f"🔴 **Short:** {short_val}"
         )
         send_telegram(report)
     else:
-        send_telegram(f"⚠️ **خطا در دریافت اطلاعات:**\n\n{result}")
+        # در صورت عدم دریافت داده، پیام هشدار ساده ارسال می‌شود
+        send_telegram(f"⚠️ **خطا در دریافت اطلاعات زنده نمودار**\n⏰ `{current_time}`")
