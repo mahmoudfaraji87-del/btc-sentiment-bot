@@ -55,6 +55,7 @@ if __name__ == "__main__":
     if current_data:
         last_data = load_last_state()
         
+        # تنها در صورت وجود تغییر نسبت به چک قبلی پیام فرستاده می‌شود
         if current_data != last_data:
             report = (
                 "📊 **تغییر در سنتیمنت بیت‌کوین (Coinglass)**\n\n"
