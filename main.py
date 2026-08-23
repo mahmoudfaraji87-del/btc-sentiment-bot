@@ -1,22 +1,25 @@
 import os
 import requests
+import json
 
 def get_coinglass_sentiment():
-    url = "https://api.coinglass.com/api/support/sentiment/btc"
+    # استفاده از پروکسی AllOrigins برای عبور از محدودیت Cloudflare
+    target_url = "https://api.coinglass.com/api/support/sentiment/btc"
+    proxy_url = f"https://api.allorigins.win/get?url={target_url}"
+    
     headers = {
-        "accept": "application/json, text/plain, */*",
-        "accept-language": "en-US,en;q=0.9",
-        "origin": "https://www.coinglass.com",
-        "referer": "https://www.coinglass.com/",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
     
     try:
-        response = requests.get(url, headers=headers, timeout=15)
+        response = requests.get(proxy_url, headers=headers, timeout=15)
         if response.status_code == 200:
-            data = response.json()
-            if data.get("success") and "data" in data:
-                s = data["data"]
+            res_json = response.json()
+            # داده اصلی داخل کلید contents قرار دارد
+            raw_data = json.loads(res_json.get("contents", "{}"))
+            
+            if raw_data.get("success") and "data" in raw_data:
+                s = raw_data["data"]
                 return {
                     "very_bullish": s.get("veryBullish", 0),
                     "bullish": s.get("bullish", 0),
@@ -50,5 +53,4 @@ if __name__ == "__main__":
         )
         send_telegram(report)
     else:
-        # ساختار جایگزین مستقیم در صورت مسدودی IP سرور گیت‌هاب
-        send_telegram("⚠️ سرور Coinglass درخواست پایتون را مسدود کرد. در حال بازتنظیم اتصال...")
+        send_telegram("⚠️ دریافت اطلاعات با خطا مواجه شد. در حال بررسی مجدد...")
