@@ -2,49 +2,35 @@ import os
 import time
 import requests
 
-def get_coinglass_long_short_ratio():
-    # استفاده از API مستقیم دریافت نسبت Long/Short نمودار اصلی
+def get_coinglass_sentiment():
+    # استفاده از ای‌پیوآی عمومی با تغییر پارامتر زمان برای جلوگیری از کش
     timestamp = int(time.time() * 1000)
-    url = f"https://open-api.coinglass.com/api/pro/v1/futures/longShort_chart?symbol=BTC&interval=1h&_t={timestamp}"
-    
-    # آدرس دوم پشتیبان مستقیم سایت
-    backup_url = f"https://html.coinglass.com/api/futures/longShortRate?symbol=BTC&timeType=3&_t={timestamp}"
+    url = f"https://api.coinglass.com/api/support/sentiment/btc?_t={timestamp}"
     
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "application/json",
-        "Cache-Control": "no-cache"
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Referer": "https://www.coinglass.com/",
+        "Origin": "https://www.coinglass.com"
     }
     
     try:
-        # درخواست اولیه
-        res = requests.get(backup_url, headers=headers, timeout=10)
-        if res.status_code == 200:
-            data = res.json()
-            if data.get("success") and "data" in data:
-                d = data["data"]
-                # در صورتی که دیتا شامل لیست زمان‌بندی باشد، آخرین مقدار (زنده) را می‌گیرد
-                if isinstance(d, list) and len(d) > 0:
-                    latest = d[-1]
-                    long_rate = latest.get("longRate", latest.get("longRatio", 0))
-                    short_rate = latest.get("shortRate", latest.get("shortRatio", 0))
-                    return True, float(long_rate), float(short_rate)
-                elif isinstance(d, dict):
-                    long_rate = d.get("longRate", d.get("longRatio", 0))
-                    short_rate = d.get("shortRate", d.get("shortRatio", 0))
-                    return True, float(long_rate), float(short_rate)
-                    
+        response = requests.get(url, headers=headers, timeout=15)
+        if response.status_code == 200:
+            res = response.json()
+            if res.get("success") and "data" in res:
+                return True, res["data"]
     except Exception as e:
-        print("Error fetching backup API:", e)
+        print("Fetch error:", e)
         
-    return False, 0, 0
+    return False, None
 
 def send_telegram(message):
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     
     if not token or not chat_id:
-        print("توکن یا چت‌آیدی ست نشده است.")
+        print("خطا: تنظیمات تلگرام یافت نشد.")
         return
         
     url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -53,24 +39,29 @@ def send_telegram(message):
     try:
         requests.post(url, json=payload, timeout=10)
     except Exception as e:
-        print("خطا در ارسال تلگرام:", e)
+        print("Telegram error:", e)
 
 if __name__ == "__main__":
-    success, long_p, short_p = get_coinglass_long_short_ratio()
+    success, data = get_coinglass_sentiment()
     current_time = time.strftime("%H:%M:%S UTC")
 
-    if success and (long_p > 0 or short_p > 0):
-        # گرد کردن درصدها تا ۲ رقم اعشار
-        long_val = f"{long_p:.2f}%"
-        short_val = f"{short_p:.2f}%"
-        
+    if success and data:
+        very_bullish = data.get("veryBullish", 0)
+        bullish = data.get("bullish", 0)
+        neutral = data.get("neutral", 0)
+        bearish = data.get("bearish", 0)
+        very_bearish = data.get("veryBearish", 0)
+
         report = (
-            f"📊 **پایش آنلاین نسبت Long/Short بیت‌کوین**\n"
-            f"⏰ زمان بروزرسانی: `{current_time}`\n\n"
-            f"🟢 **Long:** {long_val}\n"
-            f"🔴 **Short:** {short_val}"
+            f"📊 **پایش ساعتی سنتیمنت بیت‌کوین (Coinglass)**\n"
+            f"⏰ زمان: `{current_time}`\n\n"
+            f"🟢 Very Bullish: {very_bullish}%\n"
+            f"🟢 Bullish: {bullish}%\n"
+            f"⚪ Neutral: {neutral}%\n"
+            f"🔴 Bearish: {bearish}%\n"
+            f"🔴 Very Bearish: {very_bearish}%"
         )
         send_telegram(report)
     else:
-        # در صورت عدم دریافت داده، پیام هشدار ساده ارسال می‌شود
-        send_telegram(f"⚠️ **خطا در دریافت اطلاعات زنده نمودار**\n⏰ `{current_time}`")
+        # اگر اطلاعات به هر دلیلی دریافت نشد، پیام هشدار ساده فرستاده می‌شود تا تلگرام قطع نشود
+        send_telegram(f"⚠️ **عدم امکان دریافت اطلاعات از سرور کوین‌گلس**\n⏰ `{current_time}`")
