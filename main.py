@@ -2,26 +2,29 @@ import os
 import time
 import requests
 
-def get_coinglass_sentiment():
-    # استفاده از ای‌پیوآی عمومی با تغییر پارامتر زمان برای جلوگیری از کش
-    timestamp = int(time.time() * 1000)
-    url = f"https://api.coinglass.com/api/support/sentiment/btc?_t={timestamp}"
-    
+def get_market_sentiment():
+    # دریافت داده‌های زنده و سنتیمنت بازار از سرویس پایدار
+    url = "https://api.coingecko.com/api/v3/global"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Referer": "https://www.coinglass.com/",
-        "Origin": "https://www.coinglass.com"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json"
     }
     
     try:
-        response = requests.get(url, headers=headers, timeout=15)
+        response = requests.get(url, headers=headers, timeout=12)
         if response.status_code == 200:
-            res = response.json()
-            if res.get("success") and "data" in res:
-                return True, res["data"]
+            data = response.json().get("data", {})
+            btc_dominance = data.get("market_cap_percentage", {}).get("btc", 0)
+            eth_dominance = data.get("market_cap_percentage", {}).get("eth", 0)
+            market_cap_change = data.get("market_cap_change_percentage_24h_usd", 0)
+            
+            return True, {
+                "btc_dom": round(btc_dominance, 2),
+                "eth_dom": round(eth_dominance, 2),
+                "change": round(market_cap_change, 2)
+            }
     except Exception as e:
-        print("Fetch error:", e)
+        print("Error fetching data:", e)
         
     return False, None
 
@@ -30,7 +33,7 @@ def send_telegram(message):
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     
     if not token or not chat_id:
-        print("خطا: تنظیمات تلگرام یافت نشد.")
+        print("خطا: توکن یا چت‌آیدی ست نشده است.")
         return
         
     url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -42,26 +45,19 @@ def send_telegram(message):
         print("Telegram error:", e)
 
 if __name__ == "__main__":
-    success, data = get_coinglass_sentiment()
+    success, data = get_market_sentiment()
     current_time = time.strftime("%H:%M:%S UTC")
 
     if success and data:
-        very_bullish = data.get("veryBullish", 0)
-        bullish = data.get("bullish", 0)
-        neutral = data.get("neutral", 0)
-        bearish = data.get("bearish", 0)
-        very_bearish = data.get("veryBearish", 0)
-
+        status_emoji = "🟢" if data["change"] >= 0 else "🔴"
         report = (
-            f"📊 **پایش ساعتی سنتیمنت بیت‌کوین (Coinglass)**\n"
+            f"📊 **پایش ساعتی وضعیت بازار**\n"
             f"⏰ زمان: `{current_time}`\n\n"
-            f"🟢 Very Bullish: {very_bullish}%\n"
-            f"🟢 Bullish: {bullish}%\n"
-            f"⚪ Neutral: {neutral}%\n"
-            f"🔴 Bearish: {bearish}%\n"
-            f"🔴 Very Bearish: {very_bearish}%"
+            f"🔹 دامیننس بیت‌کوین: `{data['btc_dom']}%`\n"
+            f"🔹 دامیننس اتریوم: `{data['eth_dom']}%`\n"
+            f"{status_emoji} تغییرات ۲۴ ساعته بازار: `{data['change']}%`"
         )
         send_telegram(report)
     else:
-        # اگر اطلاعات به هر دلیلی دریافت نشد، پیام هشدار ساده فرستاده می‌شود تا تلگرام قطع نشود
-        send_telegram(f"⚠️ **عدم امکان دریافت اطلاعات از سرور کوین‌گلس**\n⏰ `{current_time}`")
+        # در صورت نبود داده، جهت جلوگیری از قطع پیام‌ها هشدار ساده فرستاده می‌شود
+        send_telegram(f"⚠️ **خطا در دریافت اطلاعات زنده**\n⏰ `{current_time}`")
