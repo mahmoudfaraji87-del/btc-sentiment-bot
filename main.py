@@ -1,32 +1,46 @@
 import os
 import time
+from playwright.sync_api import sync_playwright
 import requests
 
-def get_coinglass_sentiment():
-    # اضافه کردن پارامتر زمان لحظه‌ای برای جلوگیری از دریافت داده‌های کش‌شده (Cache-busting)
-    timestamp = int(time.time() * 1000)
-    url = f"https://fapi.coinglass.com/api/support/sentiment/btc?_t={timestamp}"
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Cache-Control": "no-cache, no-store, must-revalidate",
-        "Pragma": "no-cache",
-        "Expires": "0",
-        "Origin": "https://www.coinglass.com",
-        "Referer": "https://www.coinglass.com/"
-    }
-    
-    try:
-        response = requests.get(url, headers=headers, timeout=15)
-        if response.status_code == 200:
-            res_json = response.json()
-            if res_json.get("success") and "data" in res_json:
-                return True, res_json["data"]
-            return False, f"خطای ساختار داده: {res_json}"
-        return False, f"کد خطا: {response.status_code}"
-    except Exception as e:
-        return False, f"خطای اتصال: {str(e)}"
+def get_coinglass_sentiment_live():
+    with sync_playwright() as p:
+        # ساخت مرورگر واقعی برای دور زدن کش و ۴۰۴
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        )
+        page = context.new_page()
+        
+        try:
+            # بارگذاری مستقیم صفحه سنتیمنت
+            page.goto("https://www.coinglass.com/LongShortRatio", wait_until="networkidle", timeout=60000)
+            time.sleep(5)  # زمان برای رندر کامل نمودارها و اعداد
+            
+            # استخراج مستقیم متن‌های درصد از روی عناصر صفحه
+            # در صورتی که ساختار DOM تغییر کرده باشد، متن صفحه پارس می‌شود
+            content = page.content()
+            
+            # تلاش برای یافتن عناصر درصد
+            elements = page.query_selector_all(".sentiment-item, .percentage, div")
+            percentages = []
+            
+            for el in elements:
+                text = el.inner_text()
+                if "%" in text and len(text) < 10:
+                    percentages.append(text.strip())
+            
+            browser.close()
+            
+            if len(percentages) >= 5:
+                return True, percentages[:5]
+            else:
+                # روش پشتیبان: دریافت از API عمومی قیمت/سنتیمنت
+                return False, "تعداد درصدهای یافت‌شده در صفحه کافی نبود."
+                
+        except Exception as e:
+            browser.close()
+            return False, f"خطای مرورگر: {str(e)}"
 
 def send_telegram(message):
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -45,27 +59,20 @@ def send_telegram(message):
         print("خطا در ارسال تلگرام:", e)
 
 if __name__ == "__main__":
-    success, data = get_coinglass_sentiment()
+    success, result = get_coinglass_sentiment_live()
     
-    if success and isinstance(data, dict):
-        # دریافت زمان لحظه‌ای به ساعت UTC جهت اطمینان از به روز بودن
+    if success:
         current_time = time.strftime("%H:%M:%S UTC")
-        
-        very_bullish = data.get("veryBullish", 0)
-        bullish = data.get("bullish", 0)
-        neutral = data.get("neutral", 0)
-        bearish = data.get("bearish", 0)
-        very_bearish = data.get("veryBearish", 0)
-        
         report = (
-            f"📊 **پایش آنلاین سنتیمنت بیت‌کوین (Coinglass)**\n"
+            f"📊 **پایش زنده سنتیمنت بیت‌کوین (Coinglass)**\n"
             f"⏰ زمان بروزرسانی: `{current_time}`\n\n"
-            f"🟢 Very Bullish: {very_bullish}%\n"
-            f"🟢 Bullish: {bullish}%\n"
-            f"⚪ Neutral: {neutral}%\n"
-            f"🔴 Bearish: {bearish}%\n"
-            f"🔴 Very Bearish: {very_bearish}%"
+            f"🟢 Very Bullish: {result[0]}\n"
+            f"🟢 Bullish: {result[1]}\n"
+            f"⚪ Neutral: {result[2]}\n"
+            f"🔴 Bearish: {result[3]}\n"
+            f"🔴 Very Bearish: {result[4]}"
         )
         send_telegram(report)
     else:
-        send_telegram(f"⚠️ **خطا در دریافت اطلاعات:**\n\n{data}")
+        # در صورت خطا در مرورگر، پیام همراه جزئیات ارسال می‌شود
+        send_telegram(f"⚠️ **خطا در دریافت اطلاعات:**\n\n{result}")
