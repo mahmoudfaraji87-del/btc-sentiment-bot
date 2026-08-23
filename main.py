@@ -1,71 +1,37 @@
-import os
-import json
-import requests
+name: Check BTC Sentiment
 
-STATE_FILE = "last_sentiment.json"
+on:
+  schedule:
+    - cron: '0 * * * *'  # اجرا سر هر ساعت
+  workflow_dispatch:      # امکان اجرای دستی
 
-def get_coinglass_sentiment():
-    url = "https://api.coinglass.com/api/support/sentiment/btc"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Referer": "https://www.coinglass.com/LongShortRatio"
-    }
-    
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        data = response.json()
-        
-        if data.get("success") and "data" in data:
-            s = data["data"]
-            return {
-                "very_bullish": s.get("veryBullish", 0),
-                "bullish": s.get("bullish", 0),
-                "neutral": s.get("neutral", 0),
-                "bearish": s.get("bearish", 0),
-                "very_bearish": s.get("veryBearish", 0)
-            }
-    except Exception as e:
-        print("Error fetching data:", e)
-    
-    return None
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-def load_last_state():
-    if os.path.exists(STATE_FILE):
-        try:
-            with open(STATE_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            return None
-    return None
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
 
-def save_current_state(data):
-    with open(STATE_FILE, "w") as f:
-        json.dump(data, f)
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
 
-def send_telegram(message):
-    token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = {"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}
-    requests.post(url, json=payload)
+      - name: Run script
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py
 
-if __name__ == "__main__":
-    current_data = get_coinglass_sentiment()
-    
-    if current_data:
-        last_data = load_last_state()
-        
-        # تنها در صورت وجود تغییر نسبت به بررسی قبلی پیام ارسال می‌شود
-        if current_data != last_data:
-            report = (
-                "📊 **تغییر جدید در سنتیمنت بیت‌کوین (Coinglass)**\n\n"
-                f"🟢 Very Bullish: {current_data['very_bullish']}%\n"
-                f"🟢 Bullish: {current_data['bullish']}%\n"
-                f"⚪ Neutral: {current_data['neutral']}%\n"
-                f"🔴 Bearish: {current_data['bearish']}%\n"
-                f"🔴 Very Bearish: {current_data['very_bearish']}%"
-            )
-            send_telegram(report)
-            save_current_state(current_data)
-        else:
-            print("داده‌ها تغییری نکرده‌اند. پیامی ارسال نشد.")
+      - name: Commit & Push state file
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add last_sentiment.json || true
+          git commit -m "Update sentiment state" || true
+          git push || true
