@@ -2,8 +2,6 @@ import os
 import json
 import requests
 
-STATE_FILE = "last_sentiment.json"
-
 def get_coinglass_sentiment():
     url = "https://api.coinglass.com/api/support/sentiment/btc"
     headers = {
@@ -29,19 +27,6 @@ def get_coinglass_sentiment():
     
     return None
 
-def load_last_state():
-    if os.path.exists(STATE_FILE):
-        try:
-            with open(STATE_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            return None
-    return None
-
-def save_current_state(data):
-    with open(STATE_FILE, "w") as f:
-        json.dump(data, f)
-
 def send_telegram(message):
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
@@ -53,19 +38,15 @@ if __name__ == "__main__":
     current_data = get_coinglass_sentiment()
     
     if current_data:
-        last_data = load_last_state()
-        
-        # تنها در صورت وجود تغییر نسبت به چک قبلی پیام فرستاده می‌شود
-        if current_data != last_data:
-            report = (
-                "📊 **تغییر در سنتیمنت بیت‌کوین (Coinglass)**\n\n"
-                f"🟢 Very Bullish: {current_data['very_bullish']}%\n"
-                f"🟢 Bullish: {current_data['bullish']}%\n"
-                f"⚪ Neutral: {current_data['neutral']}%\n"
-                f"🔴 Bearish: {current_data['bearish']}%\n"
-                f"🔴 Very Bearish: {current_data['very_bearish']}%"
-            )
-            send_telegram(report)
-            save_current_state(current_data)
-        else:
-            print("داده‌ها تغییری نکرده‌اند.")
+        report = (
+            "📊 **پایش ساعتی سنتیمنت بیت‌کوین (Coinglass)**\n\n"
+            f"🟢 Very Bullish: {current_data['very_bullish']}%\n"
+            f"🟢 Bullish: {current_data['bullish']}%\n"
+            f"⚪ Neutral: {current_data['neutral']}%\n"
+            f"🔴 Bearish: {current_data['bearish']}%\n"
+            f"🔴 Very Bearish: {current_data['very_bearish']}%"
+        )
+        send_telegram(report)
+        print("پیام با موفقیت ارسال شد.")
+    else:
+        print("خطا در دریافت اطلاعات")
