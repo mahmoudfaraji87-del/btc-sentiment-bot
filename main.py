@@ -25,6 +25,7 @@ import os
 import re
 import sys
 import json
+import time
 import requests
 from bs4 import BeautifulSoup
 
@@ -71,23 +72,35 @@ def try_direct_json():
 
 def try_scraperapi_render():
     """Attempt 2: render the page via ScraperAPI (non-datacenter IP, handles Cloudflare),
-    then parse the percentages out of the rendered HTML."""
+    then parse the percentages out of the rendered HTML.
+    Retries a few times and enables ScraperAPI's premium proxy pool, since
+    Coinglass has strong anti-bot protection that plain datacenter render
+    requests sometimes fail against (transient 500s)."""
     if not SCRAPERAPI_KEY:
         print("[scraperapi] no SCRAPERAPI_KEY set, skipping", file=sys.stderr)
         return None
     api_url = "https://api.scraperapi.com/"
-    params = {
+    base_params = {
         "api_key": SCRAPERAPI_KEY,
         "url": TARGET_URL,
-        "render": "true",   # renders JS, needed for this widget
+        "render": "true",     # renders JS, needed for this widget
+        "premium": "true",    # use premium/residential proxy pool for tougher sites
     }
-    try:
-        r = requests.get(api_url, params=params, timeout=90)
-        r.raise_for_status()
-        return parse_percentages_from_html(r.text)
-    except Exception as e:
-        print(f"[scraperapi] failed: {e}", file=sys.stderr)
-        return None
+    last_error = None
+    for attempt in range(1, 4):  # up to 3 tries
+        try:
+            r = requests.get(api_url, params=base_params, timeout=120)
+            r.raise_for_status()
+            result = parse_percentages_from_html(r.text)
+            if result is not None:
+                return result
+            last_error = "parsed 0/5 labels from rendered HTML"
+        except Exception as e:
+            last_error = str(e)
+        print(f"[scraperapi] attempt {attempt} failed: {last_error}", file=sys.stderr)
+        if attempt < 3:
+            time.sleep(5 * attempt)  # simple backoff: 5s, 10s
+    return None
 
 
 def parse_percentages_from_html(html: str):
