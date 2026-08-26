@@ -19,6 +19,9 @@ Required GitHub Actions secrets:
   SCRAPERAPI_KEY        (free tier: https://www.scraperapi.com/ -- 1000 req/month)
 Optional:
   COINGLASS_SENTIMENT_ENDPOINT   (fill in once you find the real JSON endpoint)
+  ANTHROPIC_API_KEY     (if set, Claude is used to parse the percentages out of the
+                         rendered page instead of fragile regex -- far more robust
+                         to Coinglass changing its page layout)
 """
 
 import os
@@ -26,12 +29,14 @@ import re
 import sys
 import json
 import time
+from datetime import datetime, timezone
 import requests
 from bs4 import BeautifulSoup
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 SCRAPERAPI_KEY = os.environ.get("SCRAPERAPI_KEY")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
 # --- Fill this in after inspecting the Network tab in your browser ---
 # Example shape (guess, verify yourself):
@@ -103,16 +108,66 @@ def try_scraperapi_render():
     return None
 
 
+def parse_with_claude(page_text: str):
+    """Ask Claude to extract the 5 sentiment percentages from the page text.
+    Far more robust than regex against Coinglass changing its page layout --
+    Claude reads it the way a human would instead of matching exact patterns."""
+    if not ANTHROPIC_API_KEY:
+        return None
+    prompt = (
+        "Below is the text content of a webpage. Find the 'What Is Your Current "
+        "BTC Sentiment?' section and extract the percentage for each of these "
+        "five categories: Very Bullish, Bullish, Neutral, Bearish, Very Bearish.\n\n"
+        "Reply with ONLY a JSON object, no other text, in exactly this shape:\n"
+        '{"Very Bullish": <int>, "Bullish": <int>, "Neutral": <int>, '
+        '"Bearish": <int>, "Very Bearish": <int>}\n\n'
+        "Page text:\n" + page_text[:15000]
+    )
+    try:
+        r = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": "claude-haiku-4-5-20251001",
+                "max_tokens": 200,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=60,
+        )
+        r.raise_for_status()
+        reply_text = r.json()["content"][0]["text"].strip()
+        # Claude might wrap the JSON in ```json fences despite instructions; strip them.
+        reply_text = re.sub(r"^```(json)?|```$", "", reply_text.strip(), flags=re.MULTILINE).strip()
+        data = json.loads(reply_text)
+        if all(label in data for label in LABELS):
+            return {label: int(data[label]) for label in LABELS}
+        print(f"[claude-parse] missing labels in response: {data}", file=sys.stderr)
+        return None
+    except Exception as e:
+        print(f"[claude-parse] failed: {e}", file=sys.stderr)
+        return None
+
+
 def parse_percentages_from_html(html: str):
     """Find each sentiment label in the rendered HTML and grab the % next to it.
+    Tries Claude first (robust to layout changes), falls back to regex.
 
-    NOTE: "Bullish" and "Bearish" are substrings of "Very Bullish" / "Very Bearish",
-    so a plain search for "Bullish" would incorrectly match inside "Very Bullish"
-    and steal its percentage. We match "Very X" first, then for plain "Bullish"/
-    "Bearish" require that "Very " does NOT precede them (negative lookbehind).
+    NOTE (regex fallback): "Bullish" and "Bearish" are substrings of "Very Bullish" /
+    "Very Bearish", so a plain search for "Bullish" would incorrectly match inside
+    "Very Bullish" and steal its percentage. We match "Very X" first, then for plain
+    "Bullish"/"Bearish" require that "Very " does NOT precede them (negative lookbehind).
     """
     soup = BeautifulSoup(html, "html.parser")
     text = soup.get_text(separator="\n")
+
+    claude_result = parse_with_claude(text)
+    if claude_result is not None:
+        return claude_result
+
     results = {}
     for label in LABELS:
         if label in ("Bullish", "Bearish"):
@@ -129,12 +184,22 @@ def parse_percentages_from_html(html: str):
     return None
 
 
+def current_timestamp_str() -> str:
+    """Gregorian date + time, both UTC and Sweden local (UTC+1 winter / UTC+2 summer
+    handled automatically is not available without extra deps, so we show UTC and
+    label it clearly -- Telegram already shows each message's own local arrival time
+    too, but this makes the *data's* timestamp explicit and unambiguous)."""
+    now_utc = datetime.now(timezone.utc)
+    return now_utc.strftime("%Y-%m-%d %H:%M UTC")
+
+
 def send_telegram(results: dict):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         raise RuntimeError("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID")
 
     message = (
-        "📊 پایش ساعتی وضعیت بازار (BTC Sentiment)\n\n"
+        "📊 پایش ساعتی وضعیت بازار (BTC Sentiment)\n"
+        f"🕒 {current_timestamp_str()}\n\n"
         f"🟢 Very Bullish: {results.get('Very Bullish', '؟')}%\n"
         f"🟢 Bullish: {results.get('Bullish', '؟')}%\n"
         f"⚪ Neutral: {results.get('Neutral', '؟')}%\n"
@@ -147,6 +212,24 @@ def send_telegram(results: dict):
     print("Telegram message sent.")
 
 
+def send_failure_notice():
+    """Let the user know the bot ran but couldn't fetch data this hour,
+    instead of staying silent (silence looks like the bot is broken)."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+    message = (
+        "⚠️ پایش ساعتی بازار (BTC Sentiment)\n"
+        f"🕒 {current_timestamp_str()}\n\n"
+        "این ساعت نتونستم داده رو از Coinglass بگیرم (احتمالاً به‌خاطر "
+        "محافظت ضد-ربات سایت). ربات هنوز فعاله و ساعت بعد دوباره تلاش می‌کنه."
+    )
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message}, timeout=15)
+    except Exception as e:
+        print(f"[send_failure_notice] also failed to notify: {e}", file=sys.stderr)
+
+
 def main():
     results = try_direct_json()
     if results is None:
@@ -154,6 +237,7 @@ def main():
         results = try_scraperapi_render()
 
     if results is None:
+        send_failure_notice()
         raise RuntimeError(
             "Could not obtain sentiment data from either method. "
             "Check COINGLASS_SENTIMENT_ENDPOINT and SCRAPERAPI_KEY, "
