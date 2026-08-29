@@ -27,11 +27,15 @@ Optional:
 import os
 import re
 import sys
+import csv
 import json
 import time
 from datetime import datetime, timezone
 import requests
 from bs4 import BeautifulSoup
+
+LOG_FILE = "data/sentiment_log.csv"
+LOG_HEADER = ["timestamp_utc", "very_bullish", "bullish", "neutral", "bearish", "very_bearish"]
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
@@ -230,6 +234,27 @@ def send_failure_notice():
         print(f"[send_failure_notice] also failed to notify: {e}", file=sys.stderr)
 
 
+def append_to_log(results: dict):
+    """Append this run's data as one row to a CSV file in the repo, so months of
+    hourly data build up into a single structured file ready for later analysis
+    (Excel, pandas, or asking Claude to analyze it directly)."""
+    os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+    file_exists = os.path.isfile(LOG_FILE)
+    with open(LOG_FILE, "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(LOG_HEADER)
+        writer.writerow([
+            current_timestamp_str(),
+            results.get("Very Bullish", ""),
+            results.get("Bullish", ""),
+            results.get("Neutral", ""),
+            results.get("Bearish", ""),
+            results.get("Very Bearish", ""),
+        ])
+    print(f"Logged row to {LOG_FILE}")
+
+
 def main():
     results = try_direct_json()
     if results is None:
@@ -245,6 +270,7 @@ def main():
         )
 
     print(json.dumps(results, ensure_ascii=False, indent=2))
+    append_to_log(results)
     send_telegram(results)
 
 
