@@ -24,11 +24,19 @@ Optional:
 import os
 import re
 import sys
+import csv
 import json
 import time
 from datetime import datetime, timezone
 import requests
 from bs4 import BeautifulSoup
+
+LOG_FILE = "data/funding_rate_log.csv"
+LOG_HEADER = [
+    "timestamp_utc",
+    "btc_binance", "btc_okx", "btc_bybit",
+    "eth_binance", "eth_okx", "eth_bybit",
+]
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
@@ -157,10 +165,29 @@ def get_funding_data():
     soup = BeautifulSoup(html, "html.parser")
     text = soup.get_text(separator="\n")
 
+    print(f"[debug] fetched page text length: {len(text)} chars", file=sys.stderr)
+    if not ANTHROPIC_API_KEY:
+        print("[debug] ANTHROPIC_API_KEY not set -- skipping Claude parse, using regex only", file=sys.stderr)
+
     result = parse_with_claude(text)
     if result is not None:
         return result
-    return parse_with_regex(text)
+
+    result = parse_with_regex(text)
+    if result is None:
+        # Extra diagnostics for next time: show a snippet around "BTC" (any case)
+        # so we can see what the page actually contains without another round trip.
+        lower = text.lower()
+        idx = lower.find("btc")
+        if idx == -1:
+            print("[debug] the word 'BTC' does not appear anywhere in the fetched text "
+                  "-- the page likely did not render correctly (blocked/CAPTCHA/empty).",
+                  file=sys.stderr)
+            print(f"[debug] first 500 chars of fetched text:\n{text[:500]}", file=sys.stderr)
+        else:
+            print(f"[debug] snippet around first 'BTC' occurrence:\n{text[max(0, idx-100):idx+300]}",
+                  file=sys.stderr)
+    return result
 
 
 def format_pct(value: float) -> str:
@@ -199,6 +226,25 @@ def send_telegram(message: str):
     print("Telegram message sent.")
 
 
+def append_to_log(data: dict):
+    """Append this run's data as one row to a CSV file in the repo."""
+    os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+    file_exists = os.path.isfile(LOG_FILE)
+    row = [current_timestamp_str()]
+    for coin in COINS:
+        d = data.get(coin)
+        if d is None:
+            row.extend(["", "", ""])
+        else:
+            row.extend([d.get(ex, "") for ex in EXCHANGES])
+    with open(LOG_FILE, "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(LOG_HEADER)
+        writer.writerow(row)
+    print(f"Logged row to {LOG_FILE}")
+
+
 def main():
     data = get_funding_data()
 
@@ -212,6 +258,7 @@ def main():
 
     message = build_message(data)
     print(message)
+    append_to_log(data)
     send_telegram(message)
 
 
