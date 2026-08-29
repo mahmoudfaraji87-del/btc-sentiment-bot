@@ -5,6 +5,9 @@ on:
     - cron: '30 * * * *'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   run-bot:
     runs-on: ubuntu-latest
@@ -29,3 +32,13 @@ jobs:
           SCRAPERAPI_KEY: ${{ secrets.SCRAPERAPI_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python funding_rate.py
+
+      - name: Commit data log
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/funding_rate_log.csv || true
+          git diff --staged --quiet || git commit -m "Log funding rate data $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git pull --rebase || true
+          git push || true
