@@ -36,6 +36,7 @@ LOG_HEADER = [
     "timestamp_utc",
     "btc_binance", "btc_okx", "btc_bybit",
     "eth_binance", "eth_okx", "eth_bybit",
+    "btc_price_usd", "eth_price_usd",
 ]
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -199,12 +200,34 @@ def current_timestamp_str() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
-def build_message(data: dict) -> str:
+def get_prices():
+    """Fetch current BTC and ETH prices from Binance's free public API (no key needed)."""
+    try:
+        r = requests.get(
+            "https://api.binance.com/api/v3/ticker/price",
+            params={"symbols": '["BTCUSDT","ETHUSDT"]'},
+            timeout=10,
+        )
+        r.raise_for_status()
+        data = {item["symbol"]: float(item["price"]) for item in r.json()}
+        return data.get("BTCUSDT"), data.get("ETHUSDT")
+    except Exception as e:
+        print(f"[prices] failed: {e}", file=sys.stderr)
+        return None, None
+
+
+def build_message(data: dict, btc_price=None, eth_price=None) -> str:
     lines = [
         "💸 پایش نرخ فاندینگ (Funding Rate)",
         f"🕒 {current_timestamp_str()}",
         "",
     ]
+    if btc_price is not None:
+        lines.append(f"💵 BTC Price: ${btc_price:,.2f}")
+    if eth_price is not None:
+        lines.append(f"💵 ETH Price: ${eth_price:,.2f}")
+    if btc_price is not None or eth_price is not None:
+        lines.append("")
     for coin in COINS:
         d = data.get(coin)
         lines.append(f"— {coin} —")
@@ -226,7 +249,7 @@ def send_telegram(message: str):
     print("Telegram message sent.")
 
 
-def append_to_log(data: dict):
+def append_to_log(data: dict, btc_price=None, eth_price=None):
     """Append this run's data as one row to a CSV file in the repo."""
     os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
     file_exists = os.path.isfile(LOG_FILE)
@@ -237,6 +260,8 @@ def append_to_log(data: dict):
             row.extend(["", "", ""])
         else:
             row.extend([d.get(ex, "") for ex in EXCHANGES])
+    row.append(btc_price if btc_price is not None else "")
+    row.append(eth_price if eth_price is not None else "")
     with open(LOG_FILE, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         if not file_exists:
@@ -247,6 +272,7 @@ def append_to_log(data: dict):
 
 def main():
     data = get_funding_data()
+    btc_price, eth_price = get_prices()
 
     if data is None:
         send_telegram(
@@ -256,9 +282,9 @@ def main():
         )
         raise RuntimeError("Could not fetch funding rate data.")
 
-    message = build_message(data)
+    message = build_message(data, btc_price, eth_price)
     print(message)
-    append_to_log(data)
+    append_to_log(data, btc_price, eth_price)
     send_telegram(message)
 
 
