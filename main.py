@@ -35,7 +35,8 @@ import requests
 from bs4 import BeautifulSoup
 
 LOG_FILE = "data/sentiment_log.csv"
-LOG_HEADER = ["timestamp_utc", "very_bullish", "bullish", "neutral", "bearish", "very_bearish"]
+LOG_HEADER = ["timestamp_utc", "very_bullish", "bullish", "neutral", "bearish", "very_bearish",
+              "btc_price_usd", "eth_price_usd"]
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
@@ -197,13 +198,22 @@ def current_timestamp_str() -> str:
     return now_utc.strftime("%Y-%m-%d %H:%M UTC")
 
 
-def send_telegram(results: dict):
+def send_telegram(results: dict, btc_price=None, eth_price=None):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         raise RuntimeError("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID")
+
+    price_lines = ""
+    if btc_price is not None or eth_price is not None:
+        price_lines = (
+            f"💵 BTC: ${btc_price:,.2f}\n" if btc_price is not None else ""
+        ) + (
+            f"💵 ETH: ${eth_price:,.2f}\n" if eth_price is not None else ""
+        ) + "\n"
 
     message = (
         "📊 پایش ساعتی وضعیت بازار (BTC Sentiment)\n"
         f"🕒 {current_timestamp_str()}\n\n"
+        f"{price_lines}"
         f"🟢 Very Bullish: {results.get('Very Bullish', '؟')}%\n"
         f"🟢 Bullish: {results.get('Bullish', '؟')}%\n"
         f"⚪ Neutral: {results.get('Neutral', '؟')}%\n"
@@ -234,7 +244,24 @@ def send_failure_notice():
         print(f"[send_failure_notice] also failed to notify: {e}", file=sys.stderr)
 
 
-def append_to_log(results: dict):
+def get_prices():
+    """Fetch current BTC and ETH prices from Binance's free public API (no key needed).
+    Returns (btc_price, eth_price) or (None, None) on failure."""
+    try:
+        r = requests.get(
+            "https://api.binance.com/api/v3/ticker/price",
+            params={"symbols": '["BTCUSDT","ETHUSDT"]'},
+            timeout=10,
+        )
+        r.raise_for_status()
+        data = {item["symbol"]: float(item["price"]) for item in r.json()}
+        return data.get("BTCUSDT"), data.get("ETHUSDT")
+    except Exception as e:
+        print(f"[prices] failed: {e}", file=sys.stderr)
+        return None, None
+
+
+def append_to_log(results: dict, btc_price, eth_price):
     """Append this run's data as one row to a CSV file in the repo, so months of
     hourly data build up into a single structured file ready for later analysis
     (Excel, pandas, or asking Claude to analyze it directly)."""
@@ -251,6 +278,8 @@ def append_to_log(results: dict):
             results.get("Neutral", ""),
             results.get("Bearish", ""),
             results.get("Very Bearish", ""),
+            btc_price if btc_price is not None else "",
+            eth_price if eth_price is not None else "",
         ])
     print(f"Logged row to {LOG_FILE}")
 
@@ -269,9 +298,10 @@ def main():
             "or the page structure may have changed."
         )
 
+    btc_price, eth_price = get_prices()
     print(json.dumps(results, ensure_ascii=False, indent=2))
-    append_to_log(results)
-    send_telegram(results)
+    append_to_log(results, btc_price, eth_price)
+    send_telegram(results, btc_price, eth_price)
 
 
 if __name__ == "__main__":
