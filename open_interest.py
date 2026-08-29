@@ -26,11 +26,19 @@ Optional:
 import os
 import re
 import sys
+import csv
 import json
 import time
 from datetime import datetime, timezone
 import requests
 from bs4 import BeautifulSoup
+
+LOG_FILE = "data/open_interest_log.csv"
+LOG_HEADER = [
+    "timestamp_utc",
+    "btc_oi_usd", "btc_rate", "btc_change_1h", "btc_change_4h", "btc_change_24h",
+    "eth_oi_usd", "eth_rate", "eth_change_1h", "eth_change_4h", "eth_change_24h",
+]
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
@@ -220,6 +228,25 @@ def send_telegram(message: str):
     print("Telegram message sent.")
 
 
+def append_to_log(data: dict):
+    """Append this run's data as one row to a CSV file in the repo."""
+    os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+    file_exists = os.path.isfile(LOG_FILE)
+    row = [current_timestamp_str()]
+    for coin in ("BTC", "ETH"):
+        d = data.get(coin)
+        if d is None:
+            row.extend(["", "", "", "", ""])
+        else:
+            row.extend([d["oi_usd"], d["rate"], d["change_1h"], d["change_4h"], d["change_24h"]])
+    with open(LOG_FILE, "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(LOG_HEADER)
+        writer.writerow(row)
+    print(f"Logged row to {LOG_FILE}")
+
+
 def main():
     data = {}
     for coin, url in COINS.items():
@@ -227,6 +254,7 @@ def main():
 
     message = build_message(data)
     print(message)
+    append_to_log(data)
 
     if all(v is None for v in data.values()):
         # Both failed -- still notify so silence doesn't look like the bot is broken.
