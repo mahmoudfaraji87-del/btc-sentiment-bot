@@ -245,17 +245,19 @@ def send_failure_notice():
 
 
 def get_prices():
-    """Fetch current BTC and ETH prices from Binance's free public API (no key needed).
-    Returns (btc_price, eth_price) or (None, None) on failure."""
+    """Fetch current BTC and ETH prices from CoinGecko's free public API (no key needed).
+    NOTE: we use CoinGecko instead of Binance because Binance blocks requests coming
+    from US-based datacenter IPs (which is what GitHub Actions runners use) with an
+    HTTP 451 geo-restriction error -- CoinGecko has no such restriction."""
     try:
         r = requests.get(
-            "https://api.binance.com/api/v3/ticker/price",
-            params={"symbols": '["BTCUSDT","ETHUSDT"]'},
+            "https://api.coingecko.com/api/v3/simple/price",
+            params={"ids": "bitcoin,ethereum", "vs_currencies": "usd"},
             timeout=10,
         )
         r.raise_for_status()
-        data = {item["symbol"]: float(item["price"]) for item in r.json()}
-        return data.get("BTCUSDT"), data.get("ETHUSDT")
+        data = r.json()
+        return data.get("bitcoin", {}).get("usd"), data.get("ethereum", {}).get("usd")
     except Exception as e:
         print(f"[prices] failed: {e}", file=sys.stderr)
         return None, None
