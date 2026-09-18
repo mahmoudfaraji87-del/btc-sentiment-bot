@@ -509,3 +509,4 @@ timestamp_utc,value,classification,btc_price_usd,eth_price_usd
 2026-09-17 22:05 UTC,50,Neutral,76330,2445.11
 2026-09-17 23:06 UTC,50,Neutral,76408,2446.18
 2026-09-17 23:31 UTC,50,Neutral,76434,2447.25
+2026-09-18 00:05 UTC,56,Greed,76362,2445.41
