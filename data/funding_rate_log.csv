@@ -1,4 +1,4 @@
-timestamp_utc,btc_binance,btc_okx,btc_bybit,eth_binance,eth_okx,eth_bybit
+timestamp_utc,btc_binance,btc_okx,btc_bybit,eth_binance,eth_okx,eth_bybit,btc_price_usd,eth_price_usd
 2026-08-29 18:22 UTC,0.0098,0.0027,0.0044,0.0044,0.0037,0.0021
 2026-08-29 18:40 UTC,0.01,0.0025,0.0045,0.004,0.0035,0.0023,,
 2026-08-29 19:01 UTC,0.01,0.0023,0.005,0.0029,0.003,0.0023,,
